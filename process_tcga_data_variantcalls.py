@@ -1,18 +1,42 @@
+#!/usr/bin/env python
+
+"""
+Script Name: process_tcga_data_variantcalls.py
+
+Description:
+    This script processes and combines extracted TCGA MAF (Mutation Annotation Format) files
+    based on a sample sheet obtained from the GDC portal. It concatenates the MAF files,
+    retains specified columns, calculates the Variant Allele Frequency (VAF), and saves
+    the combined data to a TSV file.
+
+Author:
+    Rishika Vadlamudi
+
+Date:
+    2024-10-21
+"""
+
 import os
-import pandas as pd
+import sys
 import argparse
 import logging
-import sys
+import pandas as pd
 
 def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process and combine extracted TCGA MAF files.')
     parser.add_argument('--sample-sheet', type=str, required=True,
-                        help='Path to the sample sheet TSV file.')
+                        help='Path to the sample sheet TSV file downloaded from GDC portal.')
     parser.add_argument('--outputs-dir', type=str, default='outputs',
-                        help='Path to the outputs directory containing extracted MAF files.')
+                        help='Path to the directory containing extracted MAF files. Default is ./outputs.')
+    parser.add_argument('--output-directory', type=str, default=os.getcwd(),
+                        help='Directory where the combined MAF file will be saved. Default is the current working directory.')
     parser.add_argument('--output-file', type=str, default='combined_maf.tsv',
-                        help='Name of the output combined MAF TSV file.')
+                        help='Name of the output combined MAF TSV file. Default is combined_maf.tsv.')
+    parser.add_argument('--retain-columns', nargs='*', default=None,
+                        help='List of columns to retain from the MAF files. Default is a predefined set of columns.')
+    parser.add_argument('--calculate-vaf', action='store_true',
+                        help='Calculate Variant Allele Frequency (VAF) and add it as a new column.')
     args = parser.parse_args()
 
     # Set up logging
@@ -20,7 +44,7 @@ def main():
         level=logging.INFO,
         format='[%(asctime)s] %(levelname)s:%(name)s: %(message)s',
         handlers=[
-            logging.FileHandler("post_download_maf_processing.log"),
+            logging.FileHandler("process_tcga_maf.log"),
             logging.StreamHandler(sys.stdout)
         ]
     )
@@ -34,25 +58,25 @@ def main():
 
         # Ensure required columns are present
         required_columns = ['File ID', 'File Name', 'Project ID', 'Case ID', 'Sample ID']
-        for col in required_columns:
-            if col not in sample_sheet.columns:
-                logger.error(f"Column '{col}' not found in the sample sheet.")
-                sys.exit(1)
+        missing_columns = set(required_columns) - set(sample_sheet.columns)
+        if missing_columns:
+            logger.error(f"The following required columns are missing from the sample sheet: {missing_columns}")
+            sys.exit(1)
 
         # Create a mapping from File Name to File ID
         file_name_to_file_id = dict(zip(sample_sheet['File Name'], sample_sheet['File ID']))
 
         # Check for duplicate File Names
-        if len(file_name_to_file_id.values()) != len(set(file_name_to_file_id.values())):
-            duplicates = sample_sheet[sample_sheet.duplicated(['File Name'], keep=False)]
+        if sample_sheet['File Name'].duplicated().any():
+            duplicates = sample_sheet[sample_sheet['File Name'].duplicated(keep=False)]
             logger.warning(f"Duplicate File Names detected. Ensure each File Name is unique.\n{duplicates}")
-            # Proceeding under the assumption that File IDs are unique
 
         # Initialize a list to hold individual DataFrames
         maf_dfs = []
+        num_files_processed = 0
 
-        # Define the columns to retain
-        desired_columns = [
+        # Define the default columns to retain if not specified
+        default_desired_columns = [
             'Hugo_Symbol',
             'Chromosome',
             'Start_Position',
@@ -76,10 +100,12 @@ def main():
             'callers'
         ]
 
+        # Use specified columns or default
+        desired_columns = args.retain_columns if args.retain_columns else default_desired_columns
+
         # Iterate over the extracted MAF files
         outputs_dir = args.outputs_dir
         logger.info(f"Processing extracted MAF files in {outputs_dir}")
-        num_files_processed = 0
 
         for root, dirs, files in os.walk(outputs_dir):
             for file in files:
@@ -112,27 +138,32 @@ def main():
                     continue
 
                 # Check if desired columns are present
-                missing_columns = [col for col in desired_columns if col not in maf.columns]
-                if missing_columns:
-                    logger.warning(f"Missing columns {missing_columns} in file {file_path}. Skipping.")
-                    continue
+                missing_cols = set(desired_columns) - set(maf.columns)
+                if missing_cols:
+                    logger.warning(f"Missing columns {missing_cols} in file {file_path}. Skipping these columns.")
+                    # Adjust the desired columns to those present
+                    present_columns = [col for col in desired_columns if col in maf.columns]
+                else:
+                    present_columns = desired_columns
 
                 # Select the desired columns
-                maf_selected = maf[desired_columns].copy()
+                maf_selected = maf[present_columns].copy()
 
-                # Add the 'File ID' column
+                # Add the 'File_ID' column
                 maf_selected['File_ID'] = file_id
 
-                # Calculate VAF and add as a new column
-                # VAF = t_alt_count / t_depth
-                # Handle cases where t_depth is zero to avoid division by zero
-                maf_selected['VAF'] = maf_selected.apply(
-                    lambda row: row['t_alt_count'] / row['t_depth'] if row['t_depth'] > 0 else float('nan'),
-                    axis=1
-                )
-
-                # Optionally, round VAF to 4 decimal places for readability
-                maf_selected['VAF'] = maf_selected['VAF'].round(4)
+                # Calculate VAF and add as a new column if requested
+                if args.calculate_vaf:
+                    # Ensure required columns are present for VAF calculation
+                    if 't_alt_count' in maf_selected.columns and 't_depth' in maf_selected.columns:
+                        maf_selected['VAF'] = maf_selected.apply(
+                            lambda row: row['t_alt_count'] / row['t_depth'] if row['t_depth'] > 0 else float('nan'),
+                            axis=1
+                        )
+                        # Round VAF to 4 decimal places for readability
+                        maf_selected['VAF'] = maf_selected['VAF'].round(4)
+                    else:
+                        logger.warning(f"Columns 't_alt_count' and 't_depth' are required for VAF calculation but are missing in file {file_path}.")
 
                 # Append to the list
                 maf_dfs.append(maf_selected)
@@ -145,7 +176,7 @@ def main():
             logger.info(f"Combined MAF DataFrame shape: {combined_maf.shape}")
 
             # Define the output file path
-            output_file_path = os.path.join(outputs_dir, args.output_file)
+            output_file_path = os.path.join(args.output_directory, args.output_file)
 
             # Save the combined DataFrame to a TSV file
             combined_maf.to_csv(output_file_path, sep='\t', index=False)
@@ -160,4 +191,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
