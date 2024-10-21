@@ -10,7 +10,7 @@ Python Packages: pandas, requests
 ## Installation
 
 ```
-git clone https://github.com/yourusername/tcga-processor.git
+git clone [https://github.com/tothovalab/tcga-processor.git](https://github.com/tothovalab/tcga-processor.git)
 cd tcga-processor
 ```
 ```
