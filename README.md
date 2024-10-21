@@ -1,10 +1,7 @@
 # tcga-processor
 Compilation of scripts to easily download and process NCI GDC portal data
 
-The TCGA Processor is a collection of scripts that facilitate:
-  Downloading TCGA data using sample sheets from the GDC portal.
-  Processing RNA-Seq transcriptome data, merging expression data from multiple samples.
-  Processing variant call data (MAF files), combining mutation data from multiple samples.
+download TCGA data using sample sheets from the GDC portal, process RNA-Seq transcriptome data, merging expression data from multiple samples and process variant call data (MAF files), combining mutation data from multiple samples.
 
 ### Requires:
 Python: 3.6+
