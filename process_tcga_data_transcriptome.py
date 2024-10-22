@@ -4,8 +4,8 @@
 Script Name: process_tcga_data_rnaseq.py
 
 Description:
-    This script processes and combines extracted TCGA data files based on a sample sheet
-    obtained from the GDC portal. It merges the data on the 'gene_name' column and includes
+    This script processes and combines extracted TCGA RNA-Seq data files based on a sample sheet
+    obtained from the GDC portal. It merges the data on the 'gene_id' column and includes
     all expression columns by default. Column names are renamed to include sample identifiers
     for easy traceability.
 
@@ -13,28 +13,29 @@ Author:
     Rishika Vadlamudi
 
 Date:
-    2024-10-21
+    2024-10-22
 """
 
 import os
-import pandas as pd
+import sys
 import argparse
 import logging
-import sys
+import pandas as pd
+from functools import reduce
 
 def main():
     # Set up argument parser
-    parser = argparse.ArgumentParser(description='Process and combine extracted TCGA data files.')
+    parser = argparse.ArgumentParser(description='Process and combine extracted TCGA RNA-Seq data files.')
     parser.add_argument('--sample-sheet', type=str, required=True,
                         help='Path to the sample sheet TSV file downloaded from GDC portal.')
-    parser.add_argument('--outputs-dir', type=str, default='outputs',
-                        help='Path to the outputs directory containing extracted files.')
+    parser.add_argument('--file-directory', type=str, default='outputs',
+                        help='Path to the file directory containing extracted files.')
     parser.add_argument('--output-directory', type=str, default=os.getcwd(),
                         help='Path to the directory where the combined data will be saved. Default is the current working directory.')
     parser.add_argument('--output-file', type=str, default='combined_data.tsv',
                         help='Name of the output combined TSV file.')
     parser.add_argument('--expression-columns', nargs='*', default=None,
-                        help='List of expression columns to extract from the TSV files. Default is all columns except gene_name.')
+                        help='List of expression columns to extract from the TSV files. Default is all expression columns.')
     args = parser.parse_args()
 
     # Set up logging
@@ -42,7 +43,7 @@ def main():
         level=logging.INFO,
         format='[%(asctime)s] %(levelname)s:%(name)s: %(message)s',
         handlers=[
-            logging.FileHandler("process_tcga_data.log"),
+            logging.FileHandler("process_tcga_data_rnaseq.log"),
             logging.StreamHandler(sys.stdout)
         ]
     )
@@ -71,10 +72,10 @@ def main():
         num_files_processed = 0
 
         # Iterate over the extracted files
-        outputs_dir = args.outputs_dir
-        logger.info(f"Processing extracted files in {outputs_dir}")
+        file_directory = args.file_directory
+        logger.info(f"Processing extracted files in {file_directory}")
 
-        for root, dirs, files in os.walk(outputs_dir):
+        for root, dirs, files in os.walk(file_directory):
             for file in files:
                 file_path = os.path.join(root, file)
                 # Skip non-TSV files
@@ -100,17 +101,17 @@ def main():
                     logger.error(f"Failed to read file {file_path}: {e}")
                     continue
 
-                # Exclude rows where 'gene_name' starts with 'N_'
-                if 'gene_name' not in df.columns:
-                    logger.error(f"'gene_name' column not found in file {file_path}. Skipping.")
+                # Check that 'gene_id' and 'gene_name' are in the columns
+                if 'gene_id' not in df.columns or 'gene_name' not in df.columns:
+                    logger.error(f"'gene_id' or 'gene_name' column not found in file {file_path}. Skipping.")
                     continue
 
-                # Ensure 'gene_name' is of string type
-                df['gene_name'] = df['gene_name'].astype(str)
-                df = df[~df['gene_name'].str.startswith('N_')]
+                # Exclude rows where 'gene_id' starts with 'N_' or 'gene_name' is null
+                df = df[~(df['gene_id'].astype(str).str.startswith('N_') | df['gene_name'].isnull())]
 
-                # Set 'gene_name' as the index
-                df.set_index('gene_name', inplace=True)
+                # Ensure 'gene_id' and 'gene_name' are of string type
+                df['gene_id'] = df['gene_id'].astype(str)
+                df['gene_name'] = df['gene_name'].astype(str)
 
                 # Select expression columns
                 if args.expression_columns:
@@ -119,30 +120,30 @@ def main():
                         logger.warning(f"The following expression columns are missing in file {file_path}: {missing_cols}")
                     selected_columns = [col for col in args.expression_columns if col in df.columns]
                 else:
-                    # Exclude 'gene_name' and any columns that start with '__'
-                    selected_columns = [col for col in df.columns if not col.startswith('__')]
+                    # Exclude 'gene_id', 'gene_name', and any columns that start with '__'
+                    selected_columns = [col for col in df.columns if col not in ['gene_id', 'gene_name'] and not col.startswith('__')]
 
                 if not selected_columns:
                     logger.warning(f"No valid expression columns found in file {file_path}. Skipping.")
                     continue
 
-                # Select the desired columns
-                df_selected = df[selected_columns]
+                # Keep 'gene_id', 'gene_name', and selected expression columns
+                df_selected = df[['gene_id', 'gene_name'] + selected_columns]
 
-                # Rename the columns to include the sample identifier
-                df_selected.columns = [f"{col}_{sample_id}" for col in df_selected.columns]
+                # Rename the expression columns to include the sample identifier
+                df_selected.rename(columns={col: f"{col}_{sample_id}" for col in selected_columns}, inplace=True)
 
                 # Append the DataFrame to the list
                 data_frames.append(df_selected)
                 num_files_processed += 1
 
         if data_frames:
-            # Concatenate all DataFrames on the 'gene_name' index
-            combined_df = pd.concat(data_frames, axis=1)
+            # Merge all DataFrames on 'gene_id' and 'gene_name'
+            combined_df = reduce(lambda left, right: pd.merge(left, right, on=['gene_id', 'gene_name'], how='outer'), data_frames)
 
             # Write the combined data to a TSV file
             output_file_path = os.path.join(args.output_directory, args.output_file)
-            combined_df.to_csv(output_file_path, sep='\t')
+            combined_df.to_csv(output_file_path, sep='\t', index=False)
             logger.info(f"Combined data saved to {output_file_path}")
             logger.info(f"Number of files processed and combined: {num_files_processed}")
         else:

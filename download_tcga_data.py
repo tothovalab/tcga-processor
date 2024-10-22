@@ -11,7 +11,7 @@ Author:
     Rishika Vadlamudi
 
 Date:
-    2024-10-21
+    2024-10-22
 """
 
 import argparse
@@ -26,6 +26,7 @@ import tarfile
 import math
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import time  # Imported time module for delays
 
 def validate_file_ids(file_ids):
     """
@@ -93,7 +94,7 @@ def create_session_with_retries():
         total=5,
         backoff_factor=1,
         status_forcelist=[429, 500, 502, 503, 504],
-        method_whitelist=["POST"],
+        allowed_methods=["POST"],
         raise_on_status=False
     )
     adapter = HTTPAdapter(max_retries=retries)
@@ -222,6 +223,8 @@ def main():
                     logger.error(f"Error: Unable to download files in batch {batch_num + 1} (status code {response.status_code})")
                     logger.debug(f"Response headers: {response.headers}")
                     logger.debug(f"Response content: {response.text}")
+                    raise Exception(f"Download failed with status code {response.status_code}")
+
             except Exception as e:
                 logger.exception(f"An error occurred while downloading batch {batch_num + 1}: {e}")
                 logger.info("Retrying the failed batch...")
@@ -240,10 +243,6 @@ def main():
                         )
                         if response.status_code == 200:
                             # Process the response as before
-                            # (Same as the code above for successful response)
-                            # ...
-                            # [Copy the successful response handling code here]
-                            # Get the file name from the response headers
                             response_head_cd = response.headers.get("Content-Disposition", "")
                             file_name_match = re.findall(r'filename="*(.+?)"*$', response_head_cd)
                             if file_name_match:
@@ -276,14 +275,16 @@ def main():
                             break
                         else:
                             logger.error(f"Retry {attempt} failed with status code {response.status_code}")
+                            if attempt == retry_attempts:
+                                logger.error(f"All retry attempts failed for batch {batch_num + 1}. Skipping this batch.")
+                            else:
+                                time.sleep(5)
                     except Exception as retry_exception:
                         logger.exception(f"Retry {attempt} encountered an error: {retry_exception}")
-                    if attempt == retry_attempts:
-                        logger.error(f"All retry attempts failed for batch {batch_num + 1}. Skipping this batch.")
-                    else:
-                        # Optional: Add a delay between retries
-                        import time
-                        time.sleep(5)
+                        if attempt == retry_attempts:
+                            logger.error(f"All retry attempts failed for batch {batch_num + 1}. Skipping this batch.")
+                        else:
+                            time.sleep(5)
 
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")

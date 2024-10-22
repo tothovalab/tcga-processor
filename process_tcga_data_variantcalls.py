@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description='Process and combine extracted TCGA MAF files.')
     parser.add_argument('--sample-sheet', type=str, required=True,
                         help='Path to the sample sheet TSV file downloaded from GDC portal.')
-    parser.add_argument('--outputs-dir', type=str, default='outputs',
+    parser.add_argument('--file-directory', type=str, default='outputs',
                         help='Path to the directory containing extracted MAF files. Default is ./outputs.')
     parser.add_argument('--output-directory', type=str, default=os.getcwd(),
                         help='Directory where the combined MAF file will be saved. Default is the current working directory.')
@@ -104,10 +104,10 @@ def main():
         desired_columns = args.retain_columns if args.retain_columns else default_desired_columns
 
         # Iterate over the extracted MAF files
-        outputs_dir = args.outputs_dir
-        logger.info(f"Processing extracted MAF files in {outputs_dir}")
+        file_directory = args.file_directory
+        logger.info(f"Processing extracted MAF files in {file_directory}")
 
-        for root, dirs, files in os.walk(outputs_dir):
+        for root, dirs, files in os.walk(file_directory):
             for file in files:
                 # Identify MAF files (assuming they end with .maf or .maf.gz)
                 if not (file.endswith('.maf') or file.endswith('.maf.gz')):
